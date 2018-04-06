@@ -12,6 +12,8 @@ import shutil
 import time
 import scipy.misc
 import PIL
+import csv
+import random
 
 import matplotlib
 matplotlib.use('Agg')
@@ -20,7 +22,7 @@ import matplotlib.pyplot as plt
 from imagenet_labels import label_to_name
 
 # Things you should definitely set:
-IMAGENET_PATH = ''
+IMAGENET_PATH = '/Users/felixsu/Home/school/Sp18/CS194/project/data/nips'
 OUT_DIR = "adv_example/"
 MOMENTUM = 0.0
 # Things you can play around with:
@@ -33,7 +35,8 @@ SAMPLES_PER_DRAW = 200
 LEARNING_RATE = 1e-4
 SAMPLES_PER_DRAW = 1000
 K = 20
-IMG_INDEX = int(sys.argv[1])
+# IMG_INDEX = int(sys.argv[1])
+IMG_ID = sys.argv[1]
 MAX_LR = 1e-2
 MIN_LR = 5e-5
 # Things you probably don't want to change:
@@ -46,14 +49,17 @@ def main():
     out_dir = OUT_DIR
     k = K
     print('Starting partial-information attack with only top-' + str(k))
-    target_image_index = pseudorandom_target_image(IMG_INDEX, num_indices)
+    # target_image_index = pseudorandom_target_image(IMG_INDEX, num_indices)
+    target_image_id = pseudorandom_target_id()
 
-    x, y = get_image(IMG_INDEX)
+    # x, y = get_image(IMG_INDEX)
+    x, y = get_nips_dev_image(IMG_ID)
     orig_class = y
     initial_img = x
 
     target_img = None
-    target_img, _ = get_image(target_image_index)
+    # target_img, _ = get_image(target_image_index)
+    target_img, _ = get_nips_dev_image(target_image_id)
 
     target_class = orig_class
     print('Set target class to be original img class %d for partial-info attack' % target_class)
@@ -234,34 +240,55 @@ def main():
         np.save(os.path.join(out_dir, '%s.npy' % (i+1)), adv)
         scipy.misc.imsave(os.path.join(out_dir, '%s.png' % (i+1)), adv)
 
-def pseudorandom_target(index, total_indices, true_class):
-    rng = np.random.RandomState(index)
-    target = true_class
-    while target == true_class:
-        target = rng.randint(0, total_indices)
-    return target
+# def pseudorandom_target(index, total_indices, true_class):
+#     rng = np.random.RandomState(index)
+#     target = true_class
+#     while target == true_class:
+#         target = rng.randint(0, total_indices)
+#     return target
 
-def pseudorandom_target_image(orig_index, total_indices):
-    rng = np.random.RandomState(orig_index)
-    target_img_index = orig_index
-    while target_img_index == orig_index:
-        target_img_index = rng.randint(0, total_indices)
-    return target_img_index
+# def pseudorandom_target_image(orig_index, total_indices):
+#     rng = np.random.RandomState(orig_index)
+#     target_img_index = orig_index
+#     while target_img_index == orig_index:
+#         target_img_index = rng.randint(0, total_indices)
+#     return target_img_index
 
-def get_image(index):
-    data_path = os.path.join(IMAGENET_PATH, 'val')
-    image_paths = sorted([os.path.join(data_path, i) for i in os.listdir(data_path)])
-    assert len(image_paths) == 50000
-    labels_path = os.path.join(IMAGENET_PATH, 'val.txt')
-    with open(labels_path) as labels_file:
-        labels = [i.split(' ') for i in labels_file.read().strip().split('\n')]
-        labels = {os.path.basename(i[0]): int(i[1]) for i in labels}
-    def get(index):
-        path = image_paths[index]
+def pseudorandom_target_id():
+    data_path = os.path.join(IMAGENET_PATH, 'dev')
+    file = random.choice(os.listdir(data_path))
+    filename, file_extension = os.path.splitext(file)
+    return filename
+
+# def get_image(index):
+#     data_path = os.path.join(IMAGENET_PATH, 'val')
+#     image_paths = sorted([os.path.join(data_path, i) for i in os.listdir(data_path)])
+#     assert len(image_paths) == 50000
+#     labels_path = os.path.join(IMAGENET_PATH, 'val.txt')
+#     with open(labels_path) as labels_file:
+#         labels = [i.split(' ') for i in labels_file.read().strip().split('\n')]
+#         labels = {os.path.basename(i[0]): int(i[1]) for i in labels}
+#     def get(index):
+#         path = image_paths[index]
+#         x = load_image(path)
+#         y = labels[os.path.basename(path)]
+#         return x, y
+#     return get(index)
+
+def get_nips_dev_image(id):
+    data_path = os.path.join(IMAGENET_PATH, 'dev')
+    labels_path = os.path.join(IMAGENET_PATH, 'dev_dataset.csv')
+    def get(id):
+        path = os.path.join(data_path, str(id) + ".png")
         x = load_image(path)
-        y = labels[os.path.basename(path)]
-        return x, y
-    return get(index)
+        # y = labels[os.path.basename(path)]
+        with open(labels_path, 'rb') as f:
+            reader = csv.reader(f)
+            for row in reader:
+                if row[0] == id:
+                    y = row[6]
+        return x, int(y)
+    return get(id)
 
 # get center crop
 def load_image(path):
