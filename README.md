@@ -24,12 +24,15 @@ The code is all available! To run it yourself:
 1. Clone the repo
 2. Download and untar the following checkpoint: `http://download.tensorflow.org/models/ens4_adv_inception_v3_2017_08_18.tar.gz` and move it into the `data/` folder
 3. `cd` into the `data/` folder and run `python model_convert.py $CHECKPOINT_NAME model_v1.ckpt` (this just converts the checkpoint back to a Saver-v1 version because that's what the code is designed to read)
-4. Open the file `pi-nes.py,` and change `IMAGENET_PATH` to be the path to the imagenet dataset on your computer (if you don't have the ImageNet dataset downloaded and don't want to download it, you're welcome to override the `get_image` function in `pi-nes.py` to load (image, label) pairs from wherever you want (images should be 299x299x3)
-5. To run with the default parameters, first run `pip install -r requirements.txt`, then simply `python pi-nes.py $INDEX` where $INDEX will be the imagenet image that is adversarially modified.
-6. Check `adv_example/` directory (or whatever you set `OUT_DIR` to in `pi-nes.py`) for the results! For reference, we've included our results from running `python pi-nes.py 1234`.
+4. Open the file `imagenet-pi-nes.py,` (or `nips-pi-nes.py` to run on NIPS dataset) and change `IMAGENET_PATH` to be the path to the imagenet (or NIPS) dataset on your computer (if you don't have the ImageNet dataset downloaded and don't want to download it, you're welcome to override the `get_image` function in `pi-nes.py` to load (image, label) pairs from wherever you want (images should be 299x299x3)
+5. To run with the default parameters, first run `pip install -r requirements.txt`, then simply `python imagenet-pi-nes.py $INDEX` where $INDEX will be the imagenet image that is adversarially modified or `python nips-pi-nes.py $ID` where $ID will be the NIPS image filename that is adversarially modified.
+6. Check `adv_example/` directory (or whatever you set `OUT_DIR` to in `pi-nes.py`) for the results! For reference, we've included our results from running `python imagenet-pi-nes.py 1234`.
 
 ## Observations and Conclusions:
 First, I ran the authors' code and verified the results of the paper, which are not to be understated; the model is in fact quite robust to the substitute networks constructed. However, the effectiveness of white-box methods and particularly even coarse ones such as FGSM, suggests that a gradient-estimation attack might be the best way to proceed. Applying standard NES, interestingly, was not enough---it seems that the model has learned some first-order robustness as well, as gradient descent with NES estimates causes the adversary to get caught in plenty of plateaus, local minima, and regions with very little gradient signal. Rather than try to circumvent this with regularization/random restarts/other optimizations, we instead apply the partial-information attack from [2], (see the blog post [here](http://www.labsix.org/partial-information-adversarial-examples/), and manage to effectively construct adversarial examples even in a black-box setting. __Note that this does not invalidate any of the _formal_ claims made in [1], but instead shows that a defense that's robust to a *particular* black-box attack isn't necessarily secure in the black-box threat model. Defenses claimed to be black-box-secure benefit from being evaluated under a number of different black-box attack strategies, including substitute networks as well as the techniques presented here.
+
+## Scripts
+Get Images from Remote VM: gcloud compute scp --recurse <user>@<vm_name>:<path_to_data> <local_directory>
 
 ## Citation
 If you use this implementation in your work, please cite the following:

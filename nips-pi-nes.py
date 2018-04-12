@@ -22,8 +22,8 @@ import matplotlib.pyplot as plt
 from imagenet_labels import label_to_name
 
 # Things you should definitely set:
-IMAGENET_PATH = '/Users/felixsu/Home/school/Sp18/CS194/project/data/nips'
-OUT_DIR = "adv_example/"
+IMAGENET_PATH = '/home/felixsu/project/data/nips'
+OUT_DIR = "nips_adv//"
 MOMENTUM = 0.0
 # Things you can play around with:
 BATCH_SIZE = 40
@@ -282,11 +282,15 @@ def get_nips_dev_image(id):
         path = os.path.join(data_path, str(id) + ".png")
         x = load_image(path)
         # y = labels[os.path.basename(path)]
-        with open(labels_path, 'rb') as f:
+        print('labels_path:', labels_path)
+        with open(labels_path, 'r') as f:
             reader = csv.reader(f)
             for row in reader:
                 if row[0] == id:
+                    print("Row:", row)
                     y = row[6]
+                    print("id:", id)
+                    print("y:", y)
         return x, int(y)
     return get(id)
 
