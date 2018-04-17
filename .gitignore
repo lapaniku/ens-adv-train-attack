@@ -106,3 +106,5 @@ ENV/
 .mypy_cache/
 
 .DS_Store
+nips_adv/
+nips_adv1/
