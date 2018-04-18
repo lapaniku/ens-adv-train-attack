@@ -9,7 +9,7 @@ from google.cloud.vision import types
 # Instantiates a client
 client = vision.ImageAnnotatorClient()
 
-IMAGENET_PATH = '/home/felixsu/project/data/nips'
+IMAGENET_PATH = '/Users/felixsu/Home/school/Sp18/CS194/project/data/nips'
 IMG_ID = sys.argv[1]
 # The name of the image file to annotate
 file_name = os.path.join(os.path.join(IMAGENET_PATH, 'dev'), str(IMG_ID) + ".png")
