@@ -1,11 +1,12 @@
 from PIL import Image
-from inception_v3_imagenet import model, SIZE
+# from inception_v3_imagenet import model, SIZE
 import numpy as np
 import tensorflow as tf
 from tensorflow.python.client import device_lib
 from utils import *
 import json
 import pdb
+import io
 import os
 import sys
 import shutil
@@ -15,17 +16,27 @@ import PIL
 import csv
 import random
 
+# Imports the Google Cloud client library
+from google.cloud import vision
+from google.cloud.vision import types
+
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 from imagenet_labels import label_to_name
+from local_dict import valid_label
+
+# Instantiates a client
+client = vision.ImageAnnotatorClient()
 
 # Things you should definitely set:
 IMAGENET_PATH = '/home/felixsu/project/data/nips'
-LABEL_INDEX = 6 # This is the colummn number of TrueLabel in the dev_dataset.csv for the NIPS data
-OUT_DIR = "nips_adv1/"
-MOMENTUM = 0.0
+TARGETED = sys.argv[2]
+# LABEL_INDEX = 6 # This is the colummn number of TrueLabel in the dev_dataset.csv for the NIPS data
+OUT_DIR = "vision_nips_adv/"
+EVALS_DIR = "vision_inputs/"
+MOMENTUM = 0.5
 # Things you can play around with:
 BATCH_SIZE = 40
 SIGMA = 1e-3
@@ -41,19 +52,22 @@ MIN_LR = 5e-5
 # Things you probably don't want to change:
 MAX_QUERIES = 4000000
 num_indices = 50000
-num_labels = 1000
-
+# num_labels = 1000
 
 def main():
+    evals_dir = EVALS_DIR
     out_dir = OUT_DIR
     k = K
     print('Starting partial-information attack with only top-' + str(k))
     target_image_id = pseudorandom_target_id()
     print("Target Image ID:", target_image_id)
     x, y = get_nips_dev_image(IMG_ID)
-    orig_class = y
+    orig_class = label_to_name(y)
     initial_img = x
 
+    print("Setting img path to feed to gCloud Vision API")
+    last_adv_img_path = os.path.join(os.path.join(IMAGENET_PATH, 'dev'), str(IMG_ID) + ".png")
+    last_adv_labels = get_vision_labels(last_adv_img_path)
     target_img = None
     target_img, _ = get_nips_dev_image(target_image_id)
 
@@ -85,15 +99,21 @@ def main():
             noise_pos = tf.random_normal((batch_size//2,) + initial_img.shape)
             noise = tf.concat([noise_pos, -noise_pos], axis=0)
             eval_points = x_t + SIGMA * noise
-            logits, preds = model(sess, eval_points)
-            losses = tf.nn.softmax_cross_entropy_with_logits_v2(logits=logits, labels=labels)
-        vals, inds = tf.nn.top_k(logits, k=K)
+            losses = []
+            for i in eval_points.shape[0]:
+                candidate = eval_points[i]
+                candidate_path = os.path.join(evals_dir, '%s.png' % (i+1))
+                scipy.misc.imsave(candidate_path, candidate)
+                candidate_labels = get_vision_labels(candidate_path)
+                losses.append(-combine_scores(target_class, candidate_labels))
+            # logits, preds = model(sess, eval_points)
+            # losses = tf.nn.softmax_cross_entropy_with_logits_v2(logits=logits, labels=labels)
+        # vals, inds = tf.nn.top_k(logits, k=K)
         # inds is batch_size x k
-        good_inds = tf.where(tf.equal(inds, tf.constant(target_class))) # returns (# true) x 3
+        good_inds = tf.where(valid_label(target_class, candidate_labels)) # returns (# true) x 3
         good_images = good_inds[:,0] # inds of img in batch that worked
         losses = tf.gather(losses, good_images)
         noise = tf.gather(noise, good_images)
-
         losses_tiled = tf.tile(tf.reshape(losses, (-1, 1, 1, 1)), (1,) + initial_img.shape)
         grad_estimates.append(tf.reduce_mean(losses_tiled * noise, \
             axis=0)/SIGMA)
@@ -118,12 +138,12 @@ def main():
             grads.append(dl_dx_)
         return np.array(losses).mean(), np.mean(np.array(grads), axis=0)
 
-    with tf.device('/cpu:0'):
-        render_feed = tf.placeholder(tf.float32, initial_img.shape)
-        render_exp = tf.expand_dims(render_feed, axis=0)
-        render_logits, _ = model(sess, render_exp)
+    # with tf.device('/cpu:0'):
+    #     render_feed = tf.placeholder(tf.float32, initial_img.shape)
+    #     render_exp = tf.expand_dims(render_feed, axis=0)
+    #     render_logits, _ = model(sess, render_exp)
 
-    def render_frame(image, save_index):
+    def render_frame(image, save_index, image_path):
         # actually draw the figure
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 8))
         # image
@@ -132,7 +152,9 @@ def main():
         plt.xticks([])
         plt.yticks([])
         # classifications
-        probs = softmax(sess.run(render_logits, {render_feed: image})[0])
+        # probs = softmax(sess.run(render_logits, {render_feed: image})[0])
+        adv_labels = get_vision_labels(image_path)
+        probs = [label.score for label in adv_labels]
         topk = probs.argsort()[-5:][::-1]
         topprobs = probs[topk]
         barlist = ax2.bar(range(5), topprobs)
@@ -171,7 +193,7 @@ def main():
     last_good_adv = adv
     for i in range(max_iters):
         start = time.time()
-        render_frame(adv, i)
+        render_frame(adv, i, last_adv_img_path)
 
         # see if we should stop
         padv = sess.run(eval_adv, feed_dict={x: adv})
@@ -235,7 +257,9 @@ def main():
         print(log_text)
 
         np.save(os.path.join(out_dir, '%s.npy' % (i+1)), adv)
-        scipy.misc.imsave(os.path.join(out_dir, '%s.png' % (i+1)), adv)
+        last_adv_img_path = os.path.join(out_dir, '%s.png' % (i+1))
+        last_adv_labels = get_vision_labels(last_adv_img_path)
+        scipy.misc.imsave(last_adv_img_path, adv)
 
 def pseudorandom_target_id():
     data_path = os.path.join(IMAGENET_PATH, 'dev')
@@ -279,6 +303,23 @@ def load_image(path):
         # alpha channel
         img = img[:,:,:3]
     return img
+
+def get_vision_labels(target_image_path):
+    # Loads the image into memory
+    with io.open(target_image_path, 'rb') as image_file:
+        content = image_file.read()
+
+    vision_target_image = types.Image(content=content)
+    vision_response = client.label_detection(image=vision_target_image)
+    labels = vision_response.label_annotations
+    
+    print('Labels:')
+    for label in labels:
+        print(label.description)
+    return labels
+
+def combine_scores(true_label, labels):
+    return sum([label.score * valid_label(true_label, label) for label in labels])
 
 def get_available_gpus():
     local_device_protos = device_lib.list_local_devices()

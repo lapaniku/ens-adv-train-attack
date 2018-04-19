@@ -1,10 +1,10 @@
 import os
 import csv
 
-IMAGENET_PATH = '/Users/felixsu/Home/school/Sp18/CS194/project/data/nips'
+IMAGENET_PATH = '/home/felixsu/project/data/nips'
 
-labels_path = os.path.join(IMAGENET_PATH, 'dev_dataset.csv')
-out_path = os.path.join(IMAGENET_PATH, 'aligned_dev_dataset.csv')
+labels_path = os.path.join(IMAGENET_PATH, 'unaligned_final_dataset.csv')
+out_path = os.path.join(IMAGENET_PATH, 'final_dataset.csv')
 
 with open(labels_path, 'r') as f:
 	reader = csv.reader(f)
@@ -13,6 +13,6 @@ with open(labels_path, 'r') as f:
 		rows[i][6] = str(int(rows[i][6]) - 1)
 		rows[i][7] = str(int(rows[i][7]) - 1)
 
-with open('aligned_dev_dataset.csv', 'w') as f:
+with open(out_path, 'w') as f:
 	writer = csv.writer(f)
 	writer.writerows(rows)

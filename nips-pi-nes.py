@@ -85,6 +85,7 @@ def main():
             noise_pos = tf.random_normal((batch_size//2,) + initial_img.shape)
             noise = tf.concat([noise_pos, -noise_pos], axis=0)
             eval_points = x_t + SIGMA * noise
+            print(eval_points)
             logits, preds = model(sess, eval_points)
             losses = tf.nn.softmax_cross_entropy_with_logits_v2(logits=logits, labels=labels)
         vals, inds = tf.nn.top_k(logits, k=K)
