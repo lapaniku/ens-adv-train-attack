@@ -15,7 +15,6 @@ import scipy.misc
 import PIL
 import csv
 import random
-import base64
 
 # Imports the Google Cloud client library
 from google.cloud import vision
@@ -39,14 +38,31 @@ OUT_DIR = "vision_nips_adv/"
 EVALS_DIR = "vision_inputs/"
 MOMENTUM = 0.5
 # Things you can play around with:
-BATCH_SIZE = 40
+# BATCH_SIZE = 20
+# SIGMA = 1e-3
+# EPSILON = 0.1
+# EPS_DECAY = 0.005
+# MIN_EPS_DECAY = 5e-5
+# LEARNING_RATE = 1e-3
+# SAMPLES_PER_DRAW = 500
+# K = 15
+# IMG_ID = sys.argv[1]
+# MAX_LR = 1e-2
+# MIN_LR = 5e-5
+# Things you probably don't want to change:
+# MAX_QUERIES = 4000000
+# num_indices = 50000
+# num_labels = 1000
+
+# Things you can play around with:
+BATCH_SIZE = 20
 SIGMA = 1e-3
-EPSILON = 0.05
+EPSILON = 0.1
 EPS_DECAY = 0.005
 MIN_EPS_DECAY = 5e-5
 LEARNING_RATE = 1e-4
-SAMPLES_PER_DRAW = 1000
-K = 100
+SAMPLES_PER_DRAW = 100
+K = 15
 IMG_ID = sys.argv[1]
 MAX_LR = 1e-2
 MIN_LR = 5e-5
@@ -68,7 +84,6 @@ def main():
 
     print("Setting img path to feed to gCloud Vision API")
     last_adv_img_path = os.path.join(os.path.join(IMAGENET_PATH, 'dev'), str(IMG_ID) + ".png")
-    last_adv_labels = get_vision_labels(last_adv_img_path)
     target_img = None
     target_img, _ = get_nips_dev_image(target_image_id)
 
@@ -82,13 +97,14 @@ def main():
 
     batch_size = min(BATCH_SIZE, SAMPLES_PER_DRAW)
     assert SAMPLES_PER_DRAW % BATCH_SIZE == 0
-    one_hot_vec = one_hot(target_class, num_labels)
+    # one_hot_vec = one_hot(target_class, num_labels)
 
     x = tf.placeholder(tf.float32, initial_img.shape)
     x_t = tf.expand_dims(x, axis=0)
+    good_inds = tf.placeholder(tf.int32, [BATCH_SIZE])
+    candidate_losses = tf.placeholder(tf.float32, [BATCH_SIZE])
     gpus = [get_available_gpus()[0]]
-    labels = np.repeat(np.expand_dims(one_hot_vec, axis=0),
-                       repeats=batch_size, axis=0)
+    # labels = np.repeat(np.expand_dims(one_hot_vec, axis=0), repeats=batch_size, axis=0)
 
 
     grad_estimates = []
@@ -99,18 +115,14 @@ def main():
             noise_pos = tf.random_normal((batch_size//2,) + initial_img.shape)
             noise = tf.concat([noise_pos, -noise_pos], axis=0)
             eval_points = x_t + SIGMA * noise
-            for i in eval_points.shape[0]:
-                candidate_path = os.path.join(evals_dir, '%s.png' % (i+1))
-                candidate_labels = get_vision_labels(candidate_path)
-                losses.append(-combine_scores(target_class, candidate_labels))
             # logits, preds = model(sess, eval_points)
             # losses = tf.nn.softmax_cross_entropy_with_logits_v2(logits=logits, labels=labels)
         # vals, inds = tf.nn.top_k(logits, k=K)
         # inds is batch_size x k
-        good_inds = tf.where([valid_label(label, target_class) for label in candidate_labels]) # returns (# true) x 3
-        good_images = good_inds[:,0] # inds of img in batch that worked
-        losses = tf.gather(losses, good_images)
-        noise = tf.gather(noise, good_images)
+        # good_inds = tf.where([valid_label(label, target_class) for label in candidate_labels]) # returns (# true) x 3
+        # good_images = good_inds[:,0] # inds of img in batch that worked
+        losses = tf.gather(candidate_losses, good_inds)
+        noise = tf.gather(noise, good_inds)
         losses_tiled = tf.tile(tf.reshape(losses, (-1, 1, 1, 1)), (1,) + initial_img.shape)
         grad_estimates.append(tf.reduce_mean(losses_tiled * noise, \
             axis=0)/SIGMA)
@@ -135,13 +147,29 @@ def main():
             candidate_path = os.path.join(evals_dir, '0.png')
             scipy.misc.imsave(candidate_path, pt)
             candidates = sess.run(eval_points, feed_dict)
-            for i in range(candidates.shape[0]):
+            c_labels = []
+            c_losses = []
+            start = time.time()
+            for i in range(BATCH_SIZE):
                 candidate = candidates[i]
                 candidate_path = os.path.join(evals_dir, '%s.png' % (i+1))
                 scipy.misc.imsave(candidate_path, candidate)
-            loss, dl_dx_ = sess.run([final_losses, grad_estimate], feed_dict)
+                c_label_group = get_vision_labels(candidate_path)
+                # print("label " + str(i) + ": " + str(c_label_group))
+                c_labels.append(c_label_group)
+                c_losses.append(combine_losses(target_class, c_label_group))
+            finish = time.time()
+            print("Got image labels for batch ", _, ": ", str(finish - start))
+            g_inds = np.where([sum([valid_label(l.description, target_class) for l in label[:5]]) >= 1 for label in c_labels])[0]
+            # print([[l.description for l in label] for label in c_labels])
+            # print(np.array(c_labels).shape)
+            # print("GINDS:", g_inds)
+            # start = time.time()
+            loss, dl_dx_ = sess.run([final_losses, grad_estimate], feed_dict={candidate_losses: c_losses, good_inds: g_inds})
             losses.append(np.mean(loss))
             grads.append(dl_dx_)
+            # finish = time.time()
+            # print("Calculated gradients: ", str(finish - start))
         return np.array(losses).mean(), np.mean(np.array(grads), axis=0)
 
     # with tf.device('/cpu:0'):
@@ -160,18 +188,32 @@ def main():
         # classifications
         # probs = softmax(sess.run(render_logits, {render_feed: image})[0])
         adv_labels = get_vision_labels(image_path)
-        probs = [label.score for label in adv_labels]
+        probs = np.array([label.score for label in adv_labels])
         topk = probs.argsort()[-5:][::-1]
         topprobs = probs[topk]
         barlist = ax2.bar(range(5), topprobs)
-        for i, v in enumerate(topk):
-            if v == orig_class:
+        topk_labels = []
+        for i in range(len(topk)):
+            index = topk[i]
+            adv_label = adv_labels[index]
+            topk_labels.append(adv_label)
+            if valid_label(adv_label.description, orig_class):
                 barlist[i].set_color('g')
-            if v == target_class:
+            if valid_label(adv_label.description, target_class):
                 barlist[i].set_color('r')
+        # for i, v in enumerate(topk):
+        #     if v == orig_class:
+        #         barlist[i].set_color('g')
+        #     if v == target_class:
+        #         barlist[i].set_color('r')
+        # print("TOPK:", [(l.description, l.score) for l in topk_labels])
         plt.sca(ax2)
         plt.ylim([0, 1.1])
-        plt.xticks(range(5), [label_to_name(i)[:15] for i in topk], rotation='vertical')
+        plt.xticks(range(5), [topk_labels[i].description[:15] for i in range(len(topk))], rotation='vertical')
+        
+        for bar, label in zip(barlist, [topk_labels[i].score for i in range(len(topk))]):
+            ax2.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 5, label, ha='center', va='bottom')
+
         fig.subplots_adjust(bottom=0.2)
 
         path = os.path.join(out_dir, 'frame%06d.png' % save_index)
@@ -204,9 +246,11 @@ def main():
         # see if we should stop
         # padv = sess.run(eval_adv, feed_dict={x: adv})
         last_adv = os.path.join(evals_dir, '0.png')
+        if not os.path.exists(last_adv):
+            last_adv = last_adv_img_path
         last_adv_labels = get_vision_labels(last_adv)
         # eval_logits, eval_preds = model(sess, x_t)
-        padv = valid_label(last_adv_labels[0], target_class)
+        padv = valid_label(last_adv_labels[0].description, target_class)
         if (padv == 1) and (real_eps <= EPSILON):
             print('partial info early stopping at iter %d' % i)
             break
@@ -243,7 +287,7 @@ def main():
                 epsilon_decay = max(epsilon_decay / 2, MIN_EPS_DECAY)
             last_ls = []
 
-            print("labels:", labels)
+            print("last_adv_labels:", last_adv_labels)
         # backtracking line search for optimal lr
         current_lr = max_lr
         while current_lr > MIN_LR:
@@ -251,7 +295,7 @@ def main():
             proposed_adv = np.clip(proposed_adv, lower, upper)
             num_queries += 1
             # eval_logits_ = sess.run(eval_logits, {x: proposed_adv})[0]
-            target_class_in_top_k = tf.reduce_sum(tf.to_float([valid_label(label, target_class) for label in last_adv_labels[:k]]))) >= 1
+            target_class_in_top_k = sum([valid_label(label.description, target_class) for label in last_adv_labels[:5]]) >= 1
             if target_class_in_top_k:
                 lrs.append(current_lr)
                 adv = proposed_adv
@@ -269,7 +313,6 @@ def main():
 
         np.save(os.path.join(out_dir, '%s.npy' % (i+1)), adv)
         last_adv_img_path = os.path.join(out_dir, '%s.png' % (i+1))
-        last_adv_labels = get_vision_labels(last_adv_img_path)
         scipy.misc.imsave(last_adv_img_path, adv)
 
 def pseudorandom_target_id():
@@ -330,8 +373,9 @@ def get_vision_labels(target_image_path, print_labels=False):
             print(label.description)
     return labels
 
-def combine_scores(target_class, labels):
-    return sum([label.score * valid_label(label, target_class) for label in labels])
+def combine_losses(target_class, labels):
+    total_score = sum([label.score for label in labels])
+    return sum([label.score/total_score * (1-valid_label(label.description, target_class)) for label in labels])
 
 def get_available_gpus():
     local_device_protos = device_lib.list_local_devices()
