@@ -119,9 +119,11 @@ def main():
     final_losses = tf.concat(final_losses, axis=0)
 
     # eval network
-    with tf.device(gpus[0]):
-        eval_logits, eval_preds = model(sess, x_t)
-        eval_adv = tf.reduce_sum(tf.to_float(tf.equal(eval_preds, target_class)))
+    # with tf.device(gpus[0]):
+    #     last_adv = os.path.join(evals_dir, '0.png')
+    #     last_adv_labels = get_vision_labels(last_adv)
+    #     # eval_logits, eval_preds = model(sess, x_t)
+    #     eval_adv = tf.reduce_sum(tf.to_float([valid_label(label, target_class) for label in last_adv_labels])))
 
     samples_per_draw = SAMPLES_PER_DRAW
     def get_grad(pt, should_calc_truth=False):
@@ -130,6 +132,8 @@ def main():
         grads = []
         feed_dict = {x: pt}
         for _ in range(num_batches):
+            candidate_path = os.path.join(evals_dir, '0.png')
+            scipy.misc.imsave(candidate_path, pt)
             candidates = sess.run(eval_points, feed_dict)
             for i in range(candidates.shape[0]):
                 candidate = candidates[i]
@@ -198,7 +202,11 @@ def main():
         render_frame(adv, i, last_adv_img_path)
 
         # see if we should stop
-        padv = sess.run(eval_adv, feed_dict={x: adv})
+        # padv = sess.run(eval_adv, feed_dict={x: adv})
+        last_adv = os.path.join(evals_dir, '0.png')
+        last_adv_labels = get_vision_labels(last_adv)
+        # eval_logits, eval_preds = model(sess, x_t)
+        padv = valid_label(last_adv_labels[0], target_class)
         if (padv == 1) and (real_eps <= EPSILON):
             print('partial info early stopping at iter %d' % i)
             break
@@ -242,8 +250,9 @@ def main():
             proposed_adv = adv - current_lr * np.sign(g)
             proposed_adv = np.clip(proposed_adv, lower, upper)
             num_queries += 1
-            eval_logits_ = sess.run(eval_logits, {x: proposed_adv})[0]
-            if target_class in eval_logits_.argsort()[-k:][::-1]:
+            # eval_logits_ = sess.run(eval_logits, {x: proposed_adv})[0]
+            target_class_in_top_k = tf.reduce_sum(tf.to_float([valid_label(label, target_class) for label in last_adv_labels[:k]]))) >= 1
+            if target_class_in_top_k:
                 lrs.append(current_lr)
                 adv = proposed_adv
                 break
