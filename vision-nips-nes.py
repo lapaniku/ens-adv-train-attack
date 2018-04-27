@@ -15,6 +15,7 @@ import scipy.misc
 import PIL
 import csv
 import random
+import base64
 
 # Imports the Google Cloud client library
 from google.cloud import vision
@@ -152,9 +153,9 @@ def main():
             start = time.time()
             for i in range(BATCH_SIZE):
                 candidate = candidates[i]
-                candidate_path = os.path.join(evals_dir, '%s.png' % (i+1))
-                scipy.misc.imsave(candidate_path, candidate)
-                c_label_group = get_vision_labels(candidate_path)
+                # candidate_path = os.path.join(evals_dir, '%s.png' % (i+1))
+                # scipy.misc.imsave(candidate_path, candidate)
+                c_label_group = get_vision_labels(candidate)
                 # print("label " + str(i) + ": " + str(c_label_group))
                 c_labels.append(c_label_group)
                 c_losses.append(combine_losses(target_class, c_label_group))
@@ -177,7 +178,7 @@ def main():
     #     render_exp = tf.expand_dims(render_feed, axis=0)
     #     render_logits, _ = model(sess, render_exp)
 
-    def render_frame(image, save_index, image_path):
+    def render_frame(image, save_index):
         # actually draw the figure
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 8))
         # image
@@ -187,7 +188,7 @@ def main():
         plt.yticks([])
         # classifications
         # probs = softmax(sess.run(render_logits, {render_feed: image})[0])
-        adv_labels = get_vision_labels(image_path)
+        adv_labels = get_vision_labels(image)
         probs = np.array([label.score for label in adv_labels])
         topk = probs.argsort()[-5:][::-1]
         topprobs = probs[topk]
@@ -241,14 +242,14 @@ def main():
     last_good_adv = adv
     for i in range(max_iters):
         start = time.time()
-        render_frame(adv, i, last_adv_img_path)
+        render_frame(adv, i)
 
         # see if we should stop
         # padv = sess.run(eval_adv, feed_dict={x: adv})
-        last_adv = os.path.join(evals_dir, '0.png')
-        if not os.path.exists(last_adv):
-            last_adv = last_adv_img_path
-        last_adv_labels = get_vision_labels(last_adv)
+        # last_adv = os.path.join(evals_dir, '0.png')
+        # if not os.path.exists(last_adv):
+        #     last_adv = last_adv_img_path
+        last_adv_labels = get_vision_labels(adv)
         # eval_logits, eval_preds = model(sess, x_t)
         padv = valid_label(last_adv_labels[0].description, target_class)
         if (padv == 1) and (real_eps <= EPSILON):
@@ -295,6 +296,7 @@ def main():
             proposed_adv = np.clip(proposed_adv, lower, upper)
             num_queries += 1
             # eval_logits_ = sess.run(eval_logits, {x: proposed_adv})[0]
+            target_class_in_top_k = sum([valid_label(label.description, target_class) for label in last_adv_labels[:5]]) >= 1
             target_class_in_top_k = sum([valid_label(label.description, target_class) for label in last_adv_labels[:5]]) >= 1
             if target_class_in_top_k:
                 lrs.append(current_lr)
@@ -358,12 +360,16 @@ def load_image(path):
         img = img[:,:,:3]
     return img
 
-def get_vision_labels(target_image_path, print_labels=False):
+def get_vision_labels(img, print_labels=False):
     # Loads the image into memory
-    with io.open(target_image_path, 'rb') as image_file:
-        content = image_file.read()
+    pil_img = Image.fromarray(np.uint8(img*255))
+    img_byte_arr = io.BytesIO()
+    pil_img.save(img_byte_arr, format='JPEG')
+    img_byte_arr = img_byte_arr.getvalue()
+    # with io.open(target_image_path, 'rb') as image_file:
+    #     content = image_file.read()
 
-    vision_target_image = types.Image(content=content)
+    vision_target_image = types.Image(content=img_byte_arr)
     vision_response = client.label_detection(image=vision_target_image)
     labels = vision_response.label_annotations
     
