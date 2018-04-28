@@ -29,14 +29,14 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 from imagenet_labels import label_to_name
-from local_dict import valid_label
+from local_dict import valid_label, valid_adv_label
 
 # Instantiates a client
 client = vision.ImageAnnotatorClient()
 
 # Things you should definitely set:
 IMAGENET_PATH = '/home/felixsu/project/data/nips'
-# TARGETED = sys.argv[2]
+SOURCE_ID = sys.argv[2]
 LABEL_INDEX = 6 # This is the colummn number of TrueLabel in the dev_dataset.csv for the NIPS data
 OUT_DIR = "vision_nips_adv/"
 EVALS_DIR = "vision_inputs/"
@@ -59,16 +59,16 @@ MOMENTUM = 0.5
 # num_labels = 1000
 
 # Things you can play around with:
-BATCH_SIZE = 20
+BATCH_SIZE = 30
 SIGMA = 1e-3
 EPSILON = 0.05
-EPS_DECAY = 0.001
+EPS_DECAY = 0.005
 MIN_EPS_DECAY = 5e-5
 LEARNING_RATE = 1e-4
-SAMPLES_PER_DRAW = 100
+SAMPLES_PER_DRAW = 150
 K = 15
 IMG_ID = sys.argv[1]
-MAX_LR = 1e-2
+MAX_LR = 1e-1
 MIN_LR = 5e-4
 # Things you probably don't want to change:
 MAX_QUERIES = 4000000
@@ -80,7 +80,8 @@ def main():
     out_dir = OUT_DIR
     k = K
     print('Starting partial-information attack with only top-' + str(k))
-    target_image_id = pseudorandom_target_id()
+    target_image_id = SOURCE_ID
+    source_class = label_to_name(int(data_lookup(target_image_id, LABEL_INDEX))).split(", ")[0]
     print("Target Image ID:", target_image_id)
     x, y = get_nips_dev_image(IMG_ID)
     orig_class = label_to_name(y).split(", ")[0]
@@ -162,7 +163,7 @@ def main():
                 for future in futures:
                     response = future.result()
                     c_labels.append(response)
-                    c_losses.append(combine_losses(target_class, response))
+                    c_losses.append(combine_losses(source_class, response))
                 gcv_successes = len(c_losses)
                 if gcv_successes != BATCH_SIZE:
                     print("Successful responses:", gcv_successes)
@@ -176,7 +177,7 @@ def main():
             #     c_losses.append(combine_losses(target_class, c_label_group))
             finish = time.time()
             print("Got image labels for batch ", _, ": ", str(finish - start))
-            g_inds = np.where([sum([valid_label(l.description, target_class) for l in label[:5]]) >= 1 for label in c_labels])[0]
+            g_inds = np.where([sum([valid_adv_label(l.description, source_class) for l in label[:5]]) >= 1 for label in c_labels])[0]
             # print([[l.description for l in label] for label in c_labels])
             # print(np.array(c_labels).shape)
             # print("GINDS:", g_inds)
@@ -215,9 +216,9 @@ def main():
             index = topk[i]
             adv_label = adv_labels[index]
             topk_labels.append(adv_label)
-            if valid_label(adv_label.description, orig_class):
-                barlist[i].set_color('g')
-            if valid_label(adv_label.description, target_class):
+            # if valid_label(adv_label.description, orig_class):
+            #     barlist[i].set_color('g')
+            if valid_adv_label(adv_label.description, source_class):
                 barlist[i].set_color('r')
         # for i, v in enumerate(topk):
         #     if v == orig_class:
@@ -267,11 +268,18 @@ def main():
         # if not os.path.exists(last_adv):
         #     last_adv = last_adv_img_path
         last_adv_labels = get_vision_labels(adv)
-        # eval_logits, eval_preds = model(sess, x_t)
-        padv = valid_label(last_adv_labels[0].description, target_class)
-        if (padv == 1) and (real_eps <= EPSILON):
-            print('partial info early stopping at iter %d' % i)
-            break
+        if len(last_adv_labels) != 0:
+            # eval_logits, eval_preds = model(sess, x_t)
+            padv = valid_adv_label(last_adv_labels[0].description, source_class)
+            if (padv == 1) and (real_eps <= EPSILON):
+                 print('partial info early stopping at iter %d' % i)
+                 break
+        else:
+            print("ANNEALING EPS DECAY")
+            adv = last_good_adv # start over with a smaller eps
+            l, g = get_grad(adv)
+            assert (l < 1)
+            epsilon_decay = max(epsilon_decay / 2, MIN_EPS_DECAY)
 
         assert target_img is not None
         lower = np.clip(target_img - real_eps, 0., 1.)
@@ -279,7 +287,7 @@ def main():
         prev_g = g
         l, g = get_grad(adv)
 
-        if l < .75:
+        if l < .1:
             real_eps = max(EPSILON, real_eps - epsilon_decay)
             max_lr = MAX_LR
             last_good_adv = adv
@@ -313,7 +321,7 @@ def main():
             proposed_adv = np.clip(proposed_adv, lower, upper)
             num_queries += 1
             # eval_logits_ = sess.run(eval_logits, {x: proposed_adv})[0]
-            target_class_in_top_k = sum([valid_label(label.description, target_class) for label in last_adv_labels[:5]]) >= 1
+            target_class_in_top_k = sum([valid_adv_label(label.description, source_class) for label in last_adv_labels[:5]]) >= 1
             if target_class_in_top_k:
                 lrs.append(current_lr)
                 adv = proposed_adv
@@ -396,9 +404,9 @@ def get_vision_labels(img, print_labels=False):
             print(label.description)
     return labels
 
-def combine_losses(target_class, labels):
+def combine_losses(source_class, labels):
     total_score = sum([label.score for label in labels])
-    return sum([(label.score * (1-valid_label(label.description, target_class)))/total_score for label in labels])
+    return sum([(label.score * (1-valid_adv_label(label.description, source_class)))/total_score for label in labels])
 
 def get_available_gpus():
     local_device_protos = device_lib.list_local_devices()
