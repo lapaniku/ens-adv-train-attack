@@ -35,7 +35,7 @@ from local_dict import valid_label, valid_adv_label
 client = vision.ImageAnnotatorClient()
 
 # Things you should definitely set:
-IMAGENET_PATH = '/home/felixsu/project/data/nips'
+IMAGENET_PATH = '/home/felixsu/project/code/ens-adv-train-attack/data/nips'
 SOURCE_ID = sys.argv[2]
 LABEL_INDEX = 6 # This is the colummn number of TrueLabel in the dev_dataset.csv for the NIPS data
 OUT_DIR = "vision_nips_adv/"
