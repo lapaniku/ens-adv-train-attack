@@ -1,4 +1,5 @@
 from PIL import Image
+from concurrent.futures import ThreadPoolExecutor
 # from inception_v3_imagenet import model, SIZE
 import numpy as np
 import tensorflow as tf
@@ -20,6 +21,8 @@ import base64
 # Imports the Google Cloud client library
 from google.cloud import vision
 from google.cloud.vision import types
+
+pool = ThreadPoolExecutor(max_workers=8)
 
 import matplotlib
 matplotlib.use('Agg')
@@ -58,15 +61,15 @@ MOMENTUM = 0.5
 # Things you can play around with:
 BATCH_SIZE = 20
 SIGMA = 1e-3
-EPSILON = 0.1
-EPS_DECAY = 0.005
+EPSILON = 0.05
+EPS_DECAY = 0.001
 MIN_EPS_DECAY = 5e-5
 LEARNING_RATE = 1e-4
 SAMPLES_PER_DRAW = 100
 K = 15
 IMG_ID = sys.argv[1]
 MAX_LR = 1e-2
-MIN_LR = 5e-5
+MIN_LR = 5e-4
 # Things you probably don't want to change:
 MAX_QUERIES = 4000000
 num_indices = 50000
@@ -80,7 +83,7 @@ def main():
     target_image_id = pseudorandom_target_id()
     print("Target Image ID:", target_image_id)
     x, y = get_nips_dev_image(IMG_ID)
-    orig_class = label_to_name(y)
+    orig_class = label_to_name(y).split(", ")[0]
     initial_img = x
 
     print("Setting img path to feed to gCloud Vision API")
@@ -102,7 +105,7 @@ def main():
 
     x = tf.placeholder(tf.float32, initial_img.shape)
     x_t = tf.expand_dims(x, axis=0)
-    good_inds = tf.placeholder(tf.int32, [BATCH_SIZE])
+    good_inds = tf.placeholder(tf.int32)
     candidate_losses = tf.placeholder(tf.float32, [BATCH_SIZE])
     gpus = [get_available_gpus()[0]]
     # labels = np.repeat(np.expand_dims(one_hot_vec, axis=0), repeats=batch_size, axis=0)
@@ -145,20 +148,32 @@ def main():
         grads = []
         feed_dict = {x: pt}
         for _ in range(num_batches):
-            candidate_path = os.path.join(evals_dir, '0.png')
-            scipy.misc.imsave(candidate_path, pt)
+            # candidate_path = os.path.join(evals_dir, '0.png')
+            # scipy.misc.imsave(candidate_path, pt)
             candidates = sess.run(eval_points, feed_dict)
+            futures = []
             c_labels = []
             c_losses = []
             start = time.time()
-            for i in range(BATCH_SIZE):
-                candidate = candidates[i]
-                # candidate_path = os.path.join(evals_dir, '%s.png' % (i+1))
-                # scipy.misc.imsave(candidate_path, candidate)
-                c_label_group = get_vision_labels(candidate)
-                # print("label " + str(i) + ": " + str(c_label_group))
-                c_labels.append(c_label_group)
-                c_losses.append(combine_losses(target_class, c_label_group))
+            gcv_successes = 0
+            while (gcv_successes < BATCH_SIZE):
+                for i in range(gcv_successes, BATCH_SIZE):
+                    futures.append(pool.submit(get_vision_labels, candidates[i]))
+                for future in futures:
+                    response = future.result()
+                    c_labels.append(response)
+                    c_losses.append(combine_losses(target_class, response))
+                gcv_successes = len(c_losses)
+                if gcv_successes != BATCH_SIZE:
+                    print("Successful responses:", gcv_successes)
+            # for i in range(BATCH_SIZE):
+            #     candidate = candidates[i]
+            #     # candidate_path = os.path.join(evals_dir, '%s.png' % (i+1))
+            #     # scipy.misc.imsave(candidate_path, candidate)
+            #     c_label_group = get_vision_labels(candidate)
+            #     # print("label " + str(i) + ": " + str(c_label_group))
+            #     c_labels.append(c_label_group)
+            #     c_losses.append(combine_losses(target_class, c_label_group))
             finish = time.time()
             print("Got image labels for batch ", _, ": ", str(finish - start))
             g_inds = np.where([sum([valid_label(l.description, target_class) for l in label[:5]]) >= 1 for label in c_labels])[0]
@@ -189,10 +204,12 @@ def main():
         # classifications
         # probs = softmax(sess.run(render_logits, {render_feed: image})[0])
         adv_labels = get_vision_labels(image)
-        probs = np.array([label.score for label in adv_labels])
-        topk = probs.argsort()[-5:][::-1]
+        total_probs = sum([label.score for label in adv_labels])
+        probs = np.array([label.score/total_probs for label in adv_labels])
+        k_val = min(4, len(probs))
+        topk = probs.argsort()[-k_val:][::-1]
         topprobs = probs[topk]
-        barlist = ax2.bar(range(5), topprobs)
+        barlist = ax2.bar(range(k_val), topprobs)
         topk_labels = []
         for i in range(len(topk)):
             index = topk[i]
@@ -210,7 +227,7 @@ def main():
         # print("TOPK:", [(l.description, l.score) for l in topk_labels])
         plt.sca(ax2)
         plt.ylim([0, 1.1])
-        plt.xticks(range(5), [topk_labels[i].description[:15] for i in range(len(topk))], rotation='vertical')
+        plt.xticks(range(k_val), [topk_labels[i].description[:15] for i in range(len(topk))], rotation='vertical')
         
         for bar, label in zip(barlist, [topk_labels[i].score for i in range(len(topk))]):
             ax2.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 5, label, ha='center', va='bottom')
@@ -262,7 +279,7 @@ def main():
         prev_g = g
         l, g = get_grad(adv)
 
-        if l < 0.2:
+        if l < .75:
             real_eps = max(EPSILON, real_eps - epsilon_decay)
             max_lr = MAX_LR
             last_good_adv = adv
@@ -297,7 +314,6 @@ def main():
             num_queries += 1
             # eval_logits_ = sess.run(eval_logits, {x: proposed_adv})[0]
             target_class_in_top_k = sum([valid_label(label.description, target_class) for label in last_adv_labels[:5]]) >= 1
-            target_class_in_top_k = sum([valid_label(label.description, target_class) for label in last_adv_labels[:5]]) >= 1
             if target_class_in_top_k:
                 lrs.append(current_lr)
                 adv = proposed_adv
@@ -316,6 +332,7 @@ def main():
         np.save(os.path.join(out_dir, '%s.npy' % (i+1)), adv)
         last_adv_img_path = os.path.join(out_dir, '%s.png' % (i+1))
         scipy.misc.imsave(last_adv_img_path, adv)
+    pool.shutdown()
 
 def pseudorandom_target_id():
     data_path = os.path.join(IMAGENET_PATH, 'dev')
@@ -381,7 +398,7 @@ def get_vision_labels(img, print_labels=False):
 
 def combine_losses(target_class, labels):
     total_score = sum([label.score for label in labels])
-    return sum([label.score/total_score * (1-valid_label(label.description, target_class)) for label in labels])
+    return sum([(label.score * (1-valid_label(label.description, target_class)))/total_score for label in labels])
 
 def get_available_gpus():
     local_device_protos = device_lib.list_local_devices()
