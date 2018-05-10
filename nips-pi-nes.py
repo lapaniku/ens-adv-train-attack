@@ -24,17 +24,17 @@ from imagenet_labels import label_to_name
 # Things you should definitely set:
 IMAGENET_PATH = '/home/felixsu/project/data/nips'
 LABEL_INDEX = 6 # This is the colummn number of TrueLabel in the dev_dataset.csv for the NIPS data
-OUT_DIR = "nips_adv1/"
-MOMENTUM = 0.0
+OUT_DIR = "nips_adv/"
+MOMENTUM = 0.5
 # Things you can play around with:
-BATCH_SIZE = 40
+BATCH_SIZE = 20
 SIGMA = 1e-3
-EPSILON = 0.05
+EPSILON = 0.1
 EPS_DECAY = 0.005
 MIN_EPS_DECAY = 5e-5
-LEARNING_RATE = 1e-4
-SAMPLES_PER_DRAW = 1000
-K = 100
+LEARNING_RATE = 1e-3
+SAMPLES_PER_DRAW = 100
+K = 15
 IMG_ID = sys.argv[1]
 MAX_LR = 1e-2
 MIN_LR = 5e-5
@@ -85,6 +85,7 @@ def main():
             noise_pos = tf.random_normal((batch_size//2,) + initial_img.shape)
             noise = tf.concat([noise_pos, -noise_pos], axis=0)
             eval_points = x_t + SIGMA * noise
+            print(eval_points)
             logits, preds = model(sess, eval_points)
             losses = tf.nn.softmax_cross_entropy_with_logits_v2(logits=logits, labels=labels)
         vals, inds = tf.nn.top_k(logits, k=K)

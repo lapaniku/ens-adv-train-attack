@@ -35,7 +35,7 @@ from local_dict import valid_label, valid_adv_label
 client = vision.ImageAnnotatorClient()
 
 # Things you should definitely set:
-IMAGENET_PATH = '/home/felixsu/project/data/nips'
+IMAGENET_PATH = '/home/felixsu/project/code/ens-adv-train-attack/data/nips'
 SOURCE_ID = sys.argv[2]
 LABEL_INDEX = 6 # This is the colummn number of TrueLabel in the dev_dataset.csv for the NIPS data
 OUT_DIR = "vision_nips_adv/"
@@ -108,15 +108,16 @@ def main():
     x_t = tf.expand_dims(x, axis=0)
     good_inds = tf.placeholder(tf.int32)
     candidate_losses = tf.placeholder(tf.float32, [BATCH_SIZE])
-    gpus = [get_available_gpus()[0]]
+    cpus = [get_available_cpus()[0]]
+    print(cpus)
     # labels = np.repeat(np.expand_dims(one_hot_vec, axis=0), repeats=batch_size, axis=0)
 
 
     grad_estimates = []
     final_losses = []
-    for i, device in enumerate(gpus):
+    for i, device in enumerate(cpus):
         with tf.device(device):
-            print('loading on gpu %d of %d' % (i+1, len(gpus)))
+            print('loading on cpu %d of %d' % (i+1, len(cpus)))
             noise_pos = tf.random_normal((batch_size//2,) + initial_img.shape)
             noise = tf.concat([noise_pos, -noise_pos], axis=0)
             eval_points = x_t + SIGMA * noise
@@ -136,7 +137,7 @@ def main():
     final_losses = tf.concat(final_losses, axis=0)
 
     # eval network
-    # with tf.device(gpus[0]):
+    # with tf.device(cpus[0]):
     #     last_adv = os.path.join(evals_dir, '0.png')
     #     last_adv_labels = get_vision_labels(last_adv)
     #     # eval_logits, eval_preds = model(sess, x_t)
@@ -408,9 +409,9 @@ def combine_losses(source_class, labels):
     total_score = sum([label.score for label in labels])
     return sum([(label.score * (1-valid_adv_label(label.description, source_class)))/total_score for label in labels])
 
-def get_available_gpus():
+def get_available_cpus():
     local_device_protos = device_lib.list_local_devices()
-    return [x.name for x in local_device_protos if x.device_type == 'GPU']
+    return [x.name for x in local_device_protos if x.device_type == 'CPU']
 
 def empty_dir(dir_path):
     if os.path.exists(dir_path):
