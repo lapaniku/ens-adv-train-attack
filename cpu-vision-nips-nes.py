@@ -2,7 +2,6 @@ from PIL import Image
 from concurrent.futures import ThreadPoolExecutor
 # from inception_v3_imagenet import model, SIZE
 import numpy as np
-import tensorflow as tf
 from tensorflow.python.client import device_lib
 from utils import *
 import json
@@ -18,9 +17,15 @@ import csv
 import random
 import base64
 
+import tensorflow.compat.v1 as tf
+tf.disable_v2_behavior() 
+
 # Imports the Google Cloud client library
-from google.cloud import vision
-from google.cloud.vision import types
+import google.cloud.vision_v1 as vision
+from google.cloud.vision_v1 import types
+
+_GC_ACCESS_CONF = "hcaptcha-alpha-9c26e03ba9f2.json"
+os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = _GC_ACCESS_CONF
 
 pool = ThreadPoolExecutor(max_workers=8)
 
@@ -35,7 +40,7 @@ from local_dict import valid_label, valid_adv_label
 client = vision.ImageAnnotatorClient()
 
 # Things you should definitely set:
-IMAGENET_PATH = '/home/felixsu/project/code/ens-adv-train-attack/data/nips'
+IMAGENET_PATH = 'data/nips'
 SOURCE_ID = sys.argv[2]
 LABEL_INDEX = 6 # This is the colummn number of TrueLabel in the dev_dataset.csv for the NIPS data
 OUT_DIR = "vision_nips_adv/"
@@ -340,7 +345,8 @@ def main():
 
         np.save(os.path.join(out_dir, '%s.npy' % (i+1)), adv)
         last_adv_img_path = os.path.join(out_dir, '%s.png' % (i+1))
-        scipy.misc.imsave(last_adv_img_path, adv)
+        img = PIL.Image.fromarray((adv*255).astype('uint8'), mode="RGB")        
+        img.save(last_adv_img_path)
     pool.shutdown()
 
 def pseudorandom_target_id():
@@ -398,11 +404,12 @@ def get_vision_labels(img, print_labels=False):
     vision_target_image = types.Image(content=img_byte_arr)
     vision_response = client.label_detection(image=vision_target_image)
     labels = vision_response.label_annotations
-    
+        
     if print_labels:
-        print('Labels:')
-        for label in labels:
-            print(label.description)
+        print('Labels (and confidence score):')
+        print('=' * 30)
+        for label in vision_response.label_annotations:
+            print(label.description, '(%.2f%%)' % (label.score*100.))
     return labels
 
 def combine_losses(source_class, labels):
